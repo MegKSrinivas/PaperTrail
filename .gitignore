@@ -19,3 +19,4 @@ dist/
 # Data
 *.db
 chroma_db/
+backend/storage/
