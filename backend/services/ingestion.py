@@ -149,7 +149,7 @@ def extract_entities(paper_text: str) -> list[dict]:
 
     prompt = f"""Extract key entities from this excerpt of an academic paper. Return ONLY a JSON array, no other text, no markdown formatting.
 
-Each entity must have "name" and "type". Use ONLY these exact type values: "author", "institution", "concept", "dataset". Any entity that does not clearly fit one of these four types must be omitted entirely — do not invent new types.
+Each entity must have "name" and "type". Use ONLY these exact type values: "author", "concept", "dataset". Any entity that does not clearly fit one of these three types must be omitted entirely — do not invent new types.
 
 Excerpt:
 {excerpt}
@@ -198,7 +198,7 @@ def store_entities(db: Session, paper, entities: list[dict]) -> list[Entity]:
     for e in entities:
         name = e.get("name")
         entity_type = e.get("type")
-        if not name or not entity_type:
+        if not name or not entity_type or entity_type not in {"author", "concept", "dataset"}:
             continue  # skip malformed entries rather than crashing ingestion
 
         existing = db.query(Entity).filter(

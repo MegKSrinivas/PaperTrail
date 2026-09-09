@@ -36,6 +36,13 @@ def add_to_library(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    existing = db.query(Paper).filter(
+        Paper.arxiv_id == request.arxiv_id,
+        Paper.user_id == current_user.id,
+    ).first()
+    if existing:
+        raise HTTPException(status_code=409, detail="Paper already in your library")
+
     try:
         saved_path = download_arxiv_pdf(request.pdf_url)
     except Exception as e:

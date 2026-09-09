@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect } from 'react'
 import useSWR from 'swr'
 import { apiGet, apiPost } from '../api/client'
 
@@ -14,13 +14,17 @@ function useDebounce(value, delay) {
 export default function ArXivSearch({ onAdded }) {
   const [query, setQuery] = useState('')
   const [adding, setAdding] = useState({})
-  const [added, setAdded] = useState({})
   const debouncedQuery = useDebounce(query, 500)
 
   const shouldFetch = debouncedQuery.trim().length >= 3
   const { data, error, isLoading } = useSWR(
     shouldFetch ? `/api/arxiv/search?query=${encodeURIComponent(debouncedQuery)}&max_results=10` : null,
     apiGet
+  )
+
+  const { data: libraryData, mutate: mutateLibrary } = useSWR('/api/papers/', apiGet)
+  const libraryArxivIds = new Set(
+    (libraryData || []).map((p) => p.arxiv_id).filter(Boolean)
   )
 
   async function addPaper(paper) {
@@ -33,10 +37,14 @@ export default function ArXivSearch({ onAdded }) {
         abstract: paper.abstract,
         pdf_url: paper.pdf_url,
       })
-      setAdded((prev) => ({ ...prev, [paper.arxiv_id]: true }))
+      await mutateLibrary()
       onAdded?.()
     } catch (e) {
-      alert(`Failed to add paper: ${e.message}`)
+      if (e.status === 409) {
+        await mutateLibrary()
+      } else {
+        alert(`Failed to add paper: ${e.message}`)
+      }
     } finally {
       setAdding((prev) => ({ ...prev, [paper.arxiv_id]: false }))
     }
@@ -71,31 +79,35 @@ export default function ArXivSearch({ onAdded }) {
         )}
 
         <ul className="divide-y divide-slate-800">
-          {results.map((paper) => (
-            <li key={paper.arxiv_id} className="p-3">
-              <p className="text-white text-sm font-medium leading-snug">{paper.title}</p>
-              <p className="text-slate-400 text-xs mt-0.5 truncate">
-                {paper.authors?.slice(0, 3).join(', ')}
-                {paper.authors?.length > 3 ? ' et al.' : ''}
-              </p>
-              {paper.abstract && (
-                <p className="text-slate-500 text-xs mt-1 line-clamp-2">{paper.abstract}</p>
-              )}
-              <button
-                onClick={() => addPaper(paper)}
-                disabled={adding[paper.arxiv_id] || added[paper.arxiv_id]}
-                className={`mt-2 text-xs px-2 py-1 rounded font-medium transition-colors ${
-                  added[paper.arxiv_id]
-                    ? 'bg-green-900 text-green-300 cursor-default'
-                    : adding[paper.arxiv_id]
-                    ? 'bg-slate-700 text-slate-400 cursor-not-allowed'
-                    : 'bg-blue-700 hover:bg-blue-600 text-white cursor-pointer'
-                }`}
-              >
-                {added[paper.arxiv_id] ? 'Added' : adding[paper.arxiv_id] ? 'Adding…' : 'Add to Library'}
-              </button>
-            </li>
-          ))}
+          {results.map((paper) => {
+            const inLibrary = libraryArxivIds.has(paper.arxiv_id)
+            const isAdding = adding[paper.arxiv_id]
+            return (
+              <li key={paper.arxiv_id} className="p-3">
+                <p className="text-white text-sm font-medium leading-snug">{paper.title}</p>
+                <p className="text-slate-400 text-xs mt-0.5 truncate">
+                  {paper.authors?.slice(0, 3).join(', ')}
+                  {paper.authors?.length > 3 ? ' et al.' : ''}
+                </p>
+                {paper.abstract && (
+                  <p className="text-slate-500 text-xs mt-1 line-clamp-2">{paper.abstract}</p>
+                )}
+                <button
+                  onClick={() => !inLibrary && !isAdding && addPaper(paper)}
+                  disabled={inLibrary || isAdding}
+                  className={`mt-2 text-xs px-2 py-1 rounded font-medium transition-colors ${
+                    inLibrary
+                      ? 'bg-green-900/60 text-green-400 border border-green-800 cursor-default'
+                      : isAdding
+                      ? 'bg-slate-700 text-slate-400 cursor-not-allowed'
+                      : 'bg-blue-700 hover:bg-blue-600 text-white cursor-pointer'
+                  }`}
+                >
+                  {inLibrary ? 'Already in Library' : isAdding ? 'Adding…' : 'Add to Library'}
+                </button>
+              </li>
+            )
+          })}
         </ul>
       </div>
     </div>

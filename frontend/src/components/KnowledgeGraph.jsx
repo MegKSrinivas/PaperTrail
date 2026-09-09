@@ -1,4 +1,4 @@
-import { useMemo, useEffect } from 'react'
+import { useMemo, useEffect, useState } from 'react'
 import useSWR from 'swr'
 import dagre from '@dagrejs/dagre'
 import {
@@ -13,11 +13,9 @@ import '@xyflow/react/dist/style.css'
 import { apiGet } from '../api/client'
 
 const NODE_COLORS = {
-  concept:     '#3b82f6',
-  author:      '#22c55e',
-  dataset:     '#f59e0b',
-  institution: '#a855f7',
-  paper:       '#f43f5e',
+  concept: '#3b82f6',
+  author:  '#22c55e',
+  dataset: '#f59e0b',
 }
 
 const NODE_W = 150
@@ -87,11 +85,32 @@ export default function KnowledgeGraph({ groupId }) {
   const swrKey = groupId ? `/api/graph/data?group_id=${groupId}` : null
   const { data, error, isLoading, mutate } = useSWR(swrKey, apiGet)
 
+  const ALL_TYPES = Object.keys(NODE_COLORS)
+  const [selectedTypes, setSelectedTypes] = useState(new Set(ALL_TYPES))
+
+  function toggleType(type) {
+    setSelectedTypes((prev) => {
+      const next = new Set(prev)
+      if (next.has(type)) {
+        if (next.size === 1) return prev
+        next.delete(type)
+      } else {
+        next.add(type)
+      }
+      return next
+    })
+  }
+
   const { nodes: layoutNodes, edges: layoutEdges } = useMemo(() => {
     if (!data?.entities?.length) return { nodes: [], edges: [] }
-    const { nodes: raw, edges: rawE } = buildRaw(data.entities, data.relationships || [])
+    const filteredEntities = data.entities.filter((e) => selectedTypes.has(e.type))
+    const filteredIds = new Set(filteredEntities.map((e) => e.id))
+    const filteredRels = (data.relationships || []).filter(
+      (r) => filteredIds.has(r.source_id) && filteredIds.has(r.target_id)
+    )
+    const { nodes: raw, edges: rawE } = buildRaw(filteredEntities, filteredRels)
     return layoutWithDagre(raw, rawE)
-  }, [data])
+  }, [data, selectedTypes])
 
   const [nodes, setNodes, onNodesChange] = useNodesState(layoutNodes)
   const [edges, setEdges, onEdgesChange] = useEdgesState(layoutEdges)
@@ -129,16 +148,31 @@ export default function KnowledgeGraph({ groupId }) {
   return (
     <div className="h-full flex flex-col">
       <div className="flex items-center justify-between px-4 py-2 border-b border-slate-800 shrink-0">
-        <div className="flex flex-wrap gap-4">
-          {Object.entries(NODE_COLORS).map(([type, color]) => (
-            <span key={type} className="flex items-center gap-1.5 text-xs text-slate-400">
-              <span className="w-2.5 h-2.5 rounded-full inline-block" style={{ background: color }} />
-              {type}
-            </span>
-          ))}
+        <div className="flex flex-wrap gap-2">
+          {Object.entries(NODE_COLORS).map(([type, color]) => {
+            const active = selectedTypes.has(type)
+            return (
+              <button
+                key={type}
+                onClick={() => toggleType(type)}
+                className="flex items-center gap-1.5 text-xs px-2 py-1 rounded-full border transition-all"
+                style={{
+                  borderColor: color,
+                  background: active ? color + '22' : 'transparent',
+                  color: active ? '#f1f5f9' : '#64748b',
+                }}
+              >
+                <span
+                  className="w-2.5 h-2.5 rounded-full inline-block transition-opacity"
+                  style={{ background: color, opacity: active ? 1 : 0.3 }}
+                />
+                {type}
+              </button>
+            )
+          })}
         </div>
         <div className="flex items-center gap-3 text-xs text-slate-500">
-          <span>{layoutNodes.length} entities · {data.relationships.length} relationships</span>
+          <span>{layoutNodes.length} entities · {layoutEdges.length} relationships</span>
           <button
             onClick={() => mutate()}
             className="text-slate-400 hover:text-white transition-colors px-2 py-1 rounded hover:bg-slate-800"
