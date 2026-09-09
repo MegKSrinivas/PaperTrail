@@ -1,6 +1,3 @@
-import os
-import uuid
-import shutil
 from fastapi import APIRouter, UploadFile, File, Depends, HTTPException
 from sqlalchemy.orm import Session
 
@@ -10,16 +7,14 @@ from models.chunk import Chunk
 from models.user import User
 from routers.auth import get_current_user
 from services.pipeline import run_ingestion_pipeline
-from services.ingestion import collection as chroma_collection
+from services.ingestion import index as pinecone_index
+from services import storage
 
 router = APIRouter(prefix="/papers", tags=["papers"])
 
-STORAGE_DIR = "storage"
-os.makedirs(STORAGE_DIR, exist_ok=True)
-
 
 @router.post("/upload")
-def upload_paper(
+async def upload_paper(
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
@@ -27,18 +22,15 @@ def upload_paper(
     if not file.filename.endswith(".pdf"):
         raise HTTPException(status_code=400, detail="Only PDF files are supported")
 
-    file_id = uuid.uuid4()
-    saved_path = os.path.join(STORAGE_DIR, f"{file_id}.pdf")
-
-    with open(saved_path, "wb") as buffer:
-        shutil.copyfileobj(file.file, buffer)
+    data = await file.read()
+    r2_key = storage.upload_bytes(data, file.filename)
 
     new_paper = Paper(
         title=file.filename,
         authors=[],
         abstract=None,
         upload_source="upload",
-        s3_url=saved_path,
+        s3_url=r2_key,
         ingestion_status="pending",
         user_id=current_user.id,
     )
@@ -90,21 +82,21 @@ def delete_paper(
     if not paper:
         raise HTTPException(status_code=404, detail="Paper not found")
 
-    # remove vectors from Chroma
+    # remove vectors from Pinecone
     chunks = db.query(Chunk).filter(Chunk.paper_id == paper.id).all()
     embedding_ids = [c.embedding_id for c in chunks if c.embedding_id]
     if embedding_ids:
         try:
-            chroma_collection.delete(ids=embedding_ids)
+            pinecone_index.delete(ids=embedding_ids)
         except Exception as e:
-            print(f"Chroma delete warning: {e}")
+            print(f"Pinecone delete warning: {e}")
 
-    # delete local PDF file
-    if paper.s3_url and os.path.exists(paper.s3_url):
+    # delete PDF from R2
+    if paper.s3_url:
         try:
-            os.remove(paper.s3_url)
+            storage.delete(paper.s3_url)
         except Exception as e:
-            print(f"File delete warning: {e}")
+            print(f"R2 delete warning: {e}")
 
     # delete chunk rows (no cascade on FK)
     db.query(Chunk).filter(Chunk.paper_id == paper.id).delete()

@@ -1,3 +1,4 @@
+import os
 from sqlalchemy.orm import Session
 from models.paper import Paper
 from models.chunk import Chunk
@@ -6,6 +7,7 @@ from services.ingestion import (
     extract_entities, store_entities,
 )
 from services.graph import extract_relationships, store_relationships, detect_citations, store_citations
+from services.storage import download_to_tempfile
 
 
 def run_ingestion_pipeline(db: Session, paper: Paper, pdf_path: str) -> None:
@@ -21,7 +23,11 @@ def run_ingestion_pipeline(db: Session, paper: Paper, pdf_path: str) -> None:
     db.commit()
 
     try:
-        text = parse_pdf(pdf_path)
+        tmp_path = download_to_tempfile(pdf_path)
+        try:
+            text = parse_pdf(tmp_path)
+        finally:
+            os.remove(tmp_path)
         paper.full_text = text
 
         chunks = chunk_text(text)

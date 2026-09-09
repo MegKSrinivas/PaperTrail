@@ -1,7 +1,6 @@
 import arxiv
 import requests
-import uuid
-import os
+from services.storage import upload_bytes
 
 
 def search_arxiv(query: str, max_results: int = 10) -> list[dict]:
@@ -44,22 +43,11 @@ def search_arxiv(query: str, max_results: int = 10) -> list[dict]:
     return results
 
 
-def download_arxiv_pdf(pdf_url: str, storage_dir: str = "storage") -> str:
+def download_arxiv_pdf(pdf_url: str) -> str:
     """
-    Downloads a PDF from ArXiv given its pdf_url (from search_arxiv results)
-    and saves it to local storage, same convention as manual uploads —
-    a random UUID filename, so we never collide with or overwrite anything.
-    Returns the saved file path.
+    Downloads a PDF from ArXiv into memory and uploads it directly to R2.
+    Returns the R2 object key (stored in Paper.s3_url).
     """
-    os.makedirs(storage_dir, exist_ok=True)
-
-    file_id = uuid.uuid4()
-    saved_path = os.path.join(storage_dir, f"{file_id}.pdf")
-
     response = requests.get(pdf_url, timeout=30)
-    response.raise_for_status()  # raises an exception on 404/500/etc, caught by the caller
-
-    with open(saved_path, "wb") as f:
-        f.write(response.content)
-
-    return saved_path
+    response.raise_for_status()
+    return upload_bytes(response.content, "paper.pdf")

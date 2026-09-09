@@ -1,4 +1,4 @@
-from services.ingestion import embed_texts, collection, co, gemini_client
+from services.ingestion import embed_texts, index, co, gemini_client
 import cohere
 import os
 from sqlalchemy.orm import Session
@@ -23,25 +23,27 @@ def vector_search(query: str, top_k: int = 5, paper_id: str = None) -> list[dict
     # this text is a question, not a document, which improves matching
     query_embedding, provider = embed_texts([query], input_type="search_query")
 
-    # Optional metadata filter — lets us search within just one paper later
-    where_filter = {"paper_id": paper_id} if paper_id else None
+    # Pinecone filter syntax uses $eq operator
+    pinecone_filter = {"paper_id": {"$eq": paper_id}} if paper_id else None
 
-    results = collection.query(
-        query_embeddings=query_embedding,
-        n_results=top_k,
-        where=where_filter,
+    results = index.query(
+        vector=query_embedding[0],
+        top_k=top_k,
+        filter=pinecone_filter,
+        include_metadata=True,
     )
 
-    # ChromaDB returns parallel lists (ids[0], documents[0], metadatas[0], distances[0])
-    # for the single query we sent — we zip them into a cleaner list of dicts
+    # Pinecone returns ScoredVector objects; score is cosine similarity (higher = more similar).
+    # We store it as "distance" to keep the downstream hybrid_search logic unchanged
+    # (it normalises both signals the same way regardless of direction).
     chunks = []
-    for i in range(len(results["ids"][0])):
+    for match in results.matches:
         chunks.append({
-            "chunk_id": results["ids"][0][i],
-            "text": results["documents"][0][i],
-            "paper_id": results["metadatas"][0][i]["paper_id"],
-            "chunk_index": results["metadatas"][0][i]["chunk_index"],
-            "distance": results["distances"][0][i],  # lower = more similar
+            "chunk_id": match.id,
+            "text": match.metadata.get("text", ""),
+            "paper_id": match.metadata.get("paper_id", ""),
+            "chunk_index": match.metadata.get("chunk_index", 0),
+            "distance": 1 - match.score,  # convert similarity → distance to stay compatible
         })
 
     return chunks

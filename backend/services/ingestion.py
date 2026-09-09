@@ -4,7 +4,7 @@ from dotenv import load_dotenv
 import cohere
 from google import genai
 from google.genai import types as genai_types
-import chromadb
+from pinecone import Pinecone
 
 load_dotenv()  # makes sure .env is read even if this file is imported on its own
 
@@ -33,18 +33,10 @@ co = cohere.Client(COHERE_API_KEY)  # legacy client, used for embed()
 co_v2 = cohere.ClientV2(COHERE_API_KEY)  # current client, used for chat() (entity extraction)
 gemini_client = genai.Client(api_key=GEMINI_API_KEY)
 
-# Both providers are configured to produce vectors of this size,
-# so chunks stay compatible with each other inside the same ChromaDB collection
-# even if some were embedded by Cohere and others by Gemini (on different days, say).
 EMBEDDING_DIMENSION = 1024
 
-# ChromaDB stores everything in a local folder on disk — no server, no signup.
-# PersistentClient means the data survives between script runs (vs an in-memory-only client).
-chroma_client = chromadb.PersistentClient(path="chroma_db")
-
-# get_or_create_collection means: use it if it already exists, otherwise make it.
-# Think of a "collection" as roughly ChromaDB's version of a table.
-collection = chroma_client.get_or_create_collection(name="paper_chunks")
+pc = Pinecone(api_key=os.getenv("PINECONE_API_KEY"))
+index = pc.Index(os.getenv("PINECONE_INDEX_NAME", "papertrail"))
 
 
 def parse_pdf(file_path: str) -> str:
@@ -117,22 +109,25 @@ def embed_texts(texts: list[str], input_type: str = "search_document") -> tuple[
 
 def store_chunks(paper_id: str, chunks: list[str], embeddings: list[list[float]]) -> list[str]:
     """
-    Stores each chunk's text + embedding vector in ChromaDB, tagged with
-    which paper it belongs to and its position in that paper.
-    Returns the list of ChromaDB IDs generated for these chunks — these are
-    what we'll save into the `embedding_id` column on our Postgres Chunk rows,
-    so each Postgres row can be linked back to its vector in ChromaDB.
+    Upserts each chunk's embedding into Pinecone with paper_id, chunk_index,
+    and the chunk text stored in metadata (chunks are ~512 tokens, well under
+    Pinecone's 40KB metadata limit). Returns the vector IDs so they can be
+    saved into the Chunk.embedding_id column for later deletion.
     """
     ids = [f"{paper_id}_chunk_{i}" for i in range(len(chunks))]
-    metadatas = [{"paper_id": paper_id, "chunk_index": i} for i in range(len(chunks))]
-
-    collection.add(
-        ids=ids,
-        embeddings=embeddings,
-        documents=chunks,      # the actual chunk text, so ChromaDB can return it directly
-        metadatas=metadatas,
-    )
-
+    vectors = [
+        {
+            "id": ids[i],
+            "values": embeddings[i],
+            "metadata": {
+                "paper_id": paper_id,
+                "chunk_index": i,
+                "text": chunks[i],
+            },
+        }
+        for i in range(len(chunks))
+    ]
+    index.upsert(vectors=vectors)
     return ids
 
 
