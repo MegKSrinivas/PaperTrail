@@ -32,7 +32,7 @@ Excerpt:
 Return ONLY a JSON array, no other text, no markdown formatting. Each relationship should be an object with:
 - "source": exact entity name from the list above
 - "target": exact entity name from the list above
-- "type": one of "builds-on", "contradicts", "shares-dataset"
+- "type": one of "builds-on", "contradicts", "shares-dataset" — use ONLY these exact values, no others
 - "confidence": a number 0-1 indicating how confident you are
 
 Only include the 5-10 STRONGEST, clearest relationships. Keep it concise. If no clear relationships exist, return an empty array [].

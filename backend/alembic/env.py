@@ -24,6 +24,7 @@ from models.paper import Paper
 from models.chunk import Chunk
 from models.entity import Entity
 from models.relationship import Relationship
+from models.user import User
 
 # Tell Alembic this is the metadata (table definitions) to compare against
 target_metadata = Base.metadata

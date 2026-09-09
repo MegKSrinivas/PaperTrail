@@ -51,3 +51,5 @@ class Paper(Base):
     # Paper.entities to get all entities linked to this paper,
     # e.g. for the GET /papers/{id} endpoint showing extracted authors/concepts.
     entities = relationship("Entity", secondary="paper_entity", back_populates="papers")
+
+    groups = relationship("PaperGroup", secondary="paper_group", back_populates="papers")

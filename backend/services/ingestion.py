@@ -59,6 +59,15 @@ def parse_pdf(file_path: str) -> str:
     # page/section boundaries properly in the chunking step next.
     full_text = "\n\n".join(doc.text for doc in documents)
 
+    # Some PDFs (often ones with corrupted or unusual internal encoding)
+    # produce null bytes (\x00) in their extracted text. Postgres rejects
+    # any string containing these outright, which crashes ingestion partway
+    # through — after chunks/entities have already been partially written,
+    # leaving the DB session broken. Stripping them here, right at the
+    # source, means every downstream step (chunking, embedding, entity
+    # extraction, Postgres storage) always works with clean text.
+    full_text = full_text.replace("\x00", "")
+
     return full_text
 
 
@@ -140,7 +149,7 @@ def extract_entities(paper_text: str) -> list[dict]:
 
     prompt = f"""Extract key entities from this excerpt of an academic paper. Return ONLY a JSON array, no other text, no markdown formatting.
 
-Each entity should be an object with "name" and "type", where type is one of: "author", "institution", "concept", "dataset".
+Each entity must have "name" and "type". Use ONLY these exact type values: "author", "institution", "concept", "dataset". Any entity that does not clearly fit one of these four types must be omitted entirely — do not invent new types.
 
 Excerpt:
 {excerpt}
@@ -161,8 +170,6 @@ JSON array:"""
         )
         raw_text = response.text
 
-    # LLMs sometimes wrap JSON in ```json ... ``` even when told not to —
-    # strip that out before parsing so json.loads doesn't choke on it
     cleaned = raw_text.strip()
     if cleaned.startswith("```"):
         cleaned = cleaned.split("```")[1]
@@ -206,7 +213,6 @@ def store_entities(db: Session, paper, entities: list[dict]) -> list[Entity]:
             db.add(entity)
             db.flush()  # assigns entity.id without committing yet, so we can link it below
 
-        # Link this entity to the paper, if not already linked
         if paper not in entity.papers:
             entity.papers.append(paper)
 
